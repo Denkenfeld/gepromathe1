@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Mathe Master 3D: Rechne & Fange</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Canvas Container */
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* UI Layer */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none; /* Klicks gehen durch UI durch zum Canvas */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* HUD (Heads Up Display) */
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            padding: 20px;
+            color: #fff;
+            text-shadow: 0 0 10px #000;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+
+        .hud-center {
+            text-align: center;
+            margin-top: -20px; /* Etwas nach oben schieben */
+        }
+
+        #question-box {
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid #00d2ff;
+            border-radius: 15px;
+            padding: 10px 30px;
+            font-size: 2.5rem;
+            color: #fff;
+            display: inline-block;
+            box-shadow: 0 0 20px rgba(0, 210, 255, 0.5);
+        }
+
+        .stats-box {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 15px;
+            border-radius: 8px;
+        }
+
+        #lives { color: #ff4444; }
+        #score { color: #44ff44; }
+
+        /* Screens (Start, Game Over) */
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            pointer-events: auto; /* Hier müssen Klicks gefangen werden */
+            transition: opacity 0.3s;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+            display: none; /* Komplett ausblenden */
+        }
+
+        h1 {
+            color: #00d2ff;
+            font-size: 3rem;
+            margin-bottom: 10px;
+            text-align: center;
+            text-shadow: 0 0 20px #00d2ff;
+        }
+
+        h2 {
+            color: #fff;
+            margin-bottom: 30px;
+        }
+
+        button {
+            background: linear-gradient(45deg, #00d2ff, #0078ff);
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            color: white;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(0, 120, 255, 0.5);
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        button:hover {
+            box-shadow: 0 0 30px rgba(0, 120, 255, 0.8);
+        }
+
+        .instructions {
+            color: #aaa;
+            max-width: 600px;
+            text-align: center;
+            line-height: 1.6;
+            margin-bottom: 30px;
+            padding: 0 20px;
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 600px) {
+            #question-box { font-size: 1.8rem; padding: 5px 20px; }
+            h1 { font-size: 2rem; }
+            .hud-top { padding: 10px; font-size: 1rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div class="stats-box">Level: <span id="level-display">1</span></div>
+            <div class="stats-box">Highscore: <span id="highscore-display">0</span></div>
+            <div class="stats-box">Punkte: <span id="score-display">0</span></div>
+        </div>
+        <div class="hud-center">
+            <div id="question-box">?</div>
+        </div>
+        <div class="hud-top" style="justify-content: center;">
+            <div class="stats-box" style="font-size: 1.5rem;">♥ <span id="lives-display">3</span></div>
+        </div>
+    </div>
+
+    <div id="start-screen" class="screen">
+        <h1>Mathe Master 3D</h1>
+        <p class="instructions">
+            Löse die Rechenaufgabe oben.<br>
+            Tippe oder klicke auf die Kugel mit dem <b>richtigen Ergebnis</b>!<br>
+            Alle 5 richtigen Antworten steigt das Level.
+        </p>
+        <button id="btn-start">Spiel starten</button>
+    </div>
+
+    <div id="gameover-screen" class="screen hidden">
+        <h1 style="color: #ff4444;">Game Over</h1>
+        <h2 id="final-score-text">Erreichte Punkte: 0</h2>
+        <button id="btn-restart">Nochmal spielen</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.168.0/build/three.module.js';
+
+        // --- GLOBALE VARIABLEN ---
+        let scene, camera, renderer;
+        let starField;
+        let targets = []; // Die Kugeln
+        let particles = []; // Explosionspartikel
+        let raycaster, mouse;
+        
+        // Spielzustand
+        let gameState = {
+            isPlaying: false,
+            score: 0,
+            lives: 3,
+            level: 1,
+            correctCount: 0,
+            currentProblem: {},
+            highscore: parseInt(localStorage.getItem('math3d_highscore') || 0),
+            speedMultiplier: 1.0
+        };
+
+        // Audio Context (für einfache Beeps ohne externe Files)
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // UI Elemente
+        const elScore = document.getElementById('score-display');
+        const elLevel = document.getElementById('level-display');
+        const elLives = document.getElementById('lives-display');
+        const elHighscore = document.getElementById('highscore-display');
+        const elQuestion = document.getElementById('question-box');
+        const elStartScreen = document.getElementById('start-screen');
+        const elGameOverScreen = document.getElementById('gameover-screen');
+        const elFinalScore = document.getElementById('final-score-text');
+
+        // Initial Highscore anzeigen
+        elHighscore.innerText = gameState.highscore;
+
+        // --- INIT THREE.JS ---
+        function init() {
+            // Scene Setup
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.02); // Tiefe simulieren
+
+            // Kamera
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.z = 20;
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Performance Optimierung
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // Licht
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const pointLight = new THREE.PointLight(0xffffff, 1, 100);
+            pointLight.position.set(10, 10, 10);
+            scene.add(pointLight);
+
+            // Raycaster für Maus/Touch
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // Hintergrund: Sternenfeld
+            createStarField();
+
+            // Event Listener
+            window.addEventListener('resize', onWindowResize);
+            
+            // Input Listener (Maus & Touch)
+            document.addEventListener('pointerdown', onPointerDown);
+
+            // Start Buttons
+            document.getElementById('btn-start').addEventListener('click', startGame);
+            document.getElementById('btn-restart').addEventListener('click', startGame);
+
+            // Animation Loop starten
+            animate();
+        }
+
+        // --- SETUP OBJEKTE ---
+
+        function createStarField() {
+            const geometry = new THREE.BufferGeometry();
+            const count = 1000;
+            const positions = new Float32Array(count * 3);
+
+            for(let i = 0; i < count * 3; i++) {
+                positions[i] = (Math.random() - 0.5) * 100;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const material = new THREE.PointsMaterial({ color: 0xffffff, size: 0.2 });
+            starField = new THREE.Points(geometry, material);
+            scene.add(starField);
+        }
+
+        // Textur generieren für Zahlen auf Kugeln (dynamisch via Canvas)
+        function createTextTexture(text, bgColor = '#222') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+
+            // Hintergrund
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Rand
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 10;
+            ctx.strokeRect(5, 5, 246, 246);
+
+            // Text
+            ctx.font = 'bold 120px Arial';
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            return texture;
+        }
+
+        // Neue Runde generieren (Aufgabe + Kugeln)
+        function spawnLevelElements() {
+            // Alte Kugeln entfernen
+            targets.forEach(t => scene.remove(t.mesh));
+            targets = [];
+
+            // 1. Mathe Aufgabe generieren
+            gameState.currentProblem = generateMathProblem(gameState.level);
+            elQuestion.innerText = gameState.currentProblem.question;
+
+            // 2. Antworten vorbereiten (1 Richtig, 4 Falsch)
+            let answers = [gameState.currentProblem.answer];
+            while (answers.length < 5) {
+                // Falsche Antwort generieren, die nah an der richtigen ist
+                let offset = Math.floor(Math.random() * 10) - 5; 
+                if (offset === 0) offset = 1;
+                let fake = gameState.currentProblem.answer + offset;
+                if (!answers.includes(fake) && fake >= 0) { // Keine negativen Zahlen wenn nicht gewollt
+                    answers.push(fake);
+                }
+            }
+            // Mischen
+            answers.sort(() => Math.random() - 0.5);
+
+            // 3. Kugeln erzeugen
+            const geometry = new THREE.SphereGeometry(1.5, 32, 32);
+
+            answers.forEach(ans => {
+                // Zufällige Farbe
+                const hue = Math.random();
+                const color = new THREE.Color().setHSL(hue, 0.7, 0.5);
+                
+                // Material mit Zahl-Textur
+                const texture = createTextTexture(ans.toString(), '#' + color.getHexString());
+                const material = new THREE.MeshStandardMaterial({ 
+                    map: texture,
+                    roughness: 0.3,
+                    metalness: 0.1
+                });
+
+                const mesh = new THREE.Mesh(geometry, material);
+
+                // Zufällige Position (im Sichtfeld)
+                mesh.position.set(
+                    (Math.random() - 0.5) * 25, // X: -12.5 bis 12.5
+                    (Math.random() - 0.5) * 14, // Y: -7 bis 7
+                    (Math.random() - 0.5) * 10 - 5 // Z: -10 bis 0
+                );
+
+                // Individuelle Rotation & Geschwindigkeit
+                const rotationSpeed = {
+                    x: (Math.random() - 0.5) * 0.02,
+                    y: (Math.random() - 0.5) * 0.02
+                };
+                
+                // Bewegungsvektor
+                const velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.05 * gameState.speedMultiplier,
+                    (Math.random() - 0.5) * 0.05 * gameState.speedMultiplier,
+                    0
+                );
+
+                scene.add(mesh);
+                targets.push({ mesh, value: ans, rotationSpeed, velocity, isHit: false });
+            });
+        }
+
+        // --- MATHE LOGIK ---
+        function generateMathProblem(level) {
+            let a, b, op, ans, q;
+
+            // Level Logik
+            if (level <= 3) {
+                // Addition / Subtraktion
+                op = Math.random() > 0.5 ? '+' : '-';
+                a = Math.floor(Math.random() * 50) + 1;
+                b = Math.floor(Math.random() * 40) + 1;
+                if (op === '-') {
+                    if (a < b) [a, b] = [b, a]; // Keine negativen Ergebnisse
+                    ans = a - b;
+                } else {
+                    ans = a + b;
+                }
+                q = `${a} ${op} ${b}`;
+            } 
+            else if (level <= 6) {
+                // Mal / Geteilt (Kleines 1x1 bis 12)
+                op = Math.random() > 0.5 ? '×' : '÷';
+                if (op === '×') {
+                    a = Math.floor(Math.random() * 12) + 1;
+                    b = Math.floor(Math.random() * 10) + 1;
+                    ans = a * b;
+                    q = `${a} × ${b}`;
+                } else {
+                    // Division: Ergebnis muss ganzzahlig sein. Wir bauen rückwärts.
+                    b = Math.floor(Math.random() * 10) + 2; // Teiler
+                    ans = Math.floor(Math.random() * 10) + 1; // Ergebnis
+                    a = b * ans;
+                    q = `${a} ÷ ${b}`;
+                }
+            } 
+            else {
+                // Level 7+: Gemischt, größere Zahlen, Klammern
+                let type = Math.floor(Math.random() * 3);
+                if (type === 0) { // (a + b) * c
+                    let x = Math.floor(Math.random() * 10) + 1;
+                    let y = Math.floor(Math.random() * 10) + 1;
+                    let z = Math.floor(Math.random() * 5) + 2;
+                    ans = (x + y) * z;
+                    q = `(${x} + ${y}) × ${z}`;
+                } else if (type === 1) { // 100 - a
+                    a = Math.floor(Math.random() * 80) + 10;
+                    ans = 100 - a;
+                    q = `100 - ${a}`;
+                } else { // Großes Addieren
+                    a = Math.floor(Math.random() * 50) + 20;
+                    b = Math.floor(Math.random() * 50) + 20;
+                    ans = a + b;
+                    q = `${a} + ${b}`;
+                }
+            }
+
+            return { question: `${q} = ?`, answer: ans };
+        }
+
+        // --- SPIEL STEUERUNG ---
+
+        function startGame() {
+            gameState.isPlaying = true;
+            gameState.score = 0;
+            gameState.lives = 3;
+            gameState.level = 1;
+            gameState.correctCount = 0;
+            gameState.speedMultiplier = 1.0;
+
+            updateUI();
+            
+            elStartScreen.classList.add('hidden');
+            elGameOverScreen.classList.add('hidden');
+
+            spawnLevelElements();
+        }
+
+        function gameOver() {
+            gameState.isPlaying = false;
+            playSound('gameover');
+            
+            // Highscore speichern
+            if (gameState.score > gameState.highscore) {
+                gameState.highscore = gameState.score;
+                localStorage.setItem('math3d_highscore', gameState.highscore);
+                elHighscore.innerText = gameState.highscore;
+            }
+
+            elFinalScore.innerText = "Punkte: " + gameState.score;
+            elGameOverScreen.classList.remove('hidden');
+        }
+
+        function updateUI() {
+            elScore.innerText = gameState.score;
+            elLives.innerText = gameState.lives;
+            elLevel.innerText = gameState.level;
+        }
+
+        // --- INTERAKTION & GAME LOOP ---
+
+        function onPointerDown(event) {
+            if (!gameState.isPlaying) return;
+
+            // Mausposition normalisieren (-1 bis +1)
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+
+            // Schnittpunkte prüfen
+            const intersects = raycaster.intersectObjects(targets.map(t => t.mesh));
+
+            if (intersects.length > 0) {
+                const hitObject = intersects[0].object;
+                
+                // Finde das logische Objekt dazu
+                const targetData = targets.find(t => t.mesh === hitObject);
+
+                if (targetData && !targetData.isHit) {
+                    checkAnswer(targetData);
+                }
+            }
+        }
+
+        function checkAnswer(targetData) {
+            if (targetData.value === gameState.currentProblem.answer) {
+                // RICHTIG
+                playSound('correct');
+                createExplosion(targetData.mesh.position, 0x00ff00);
+                
+                gameState.score++;
+                gameState.correctCount++;
+                
+                // Schwierigkeit erhöhen
+                if (gameState.correctCount % 5 === 0) {
+                    gameState.level++;
+                    gameState.speedMultiplier += 0.2; // 20% schneller
+                    playSound('levelup');
+                }
+
+                updateUI();
+                spawnLevelElements(); // Nächste Runde
+
+            } else {
+                // FALSCH
+                playSound('wrong');
+                targetData.isHit = true; // Verhindert mehrfach Klicken
+                
+                // Wackel/Rot Animation (visuell)
+                targetData.mesh.material.color.setHex(0xff0000); // Rot färben
+                createExplosion(targetData.mesh.position, 0xff0000); // Kleine rote Explosion
+
+                // Vibration (Mobile)
+                if (navigator.vibrate) navigator.vibrate(200);
+
+                gameState.lives--;
+                updateUI();
+
+                if (gameState.lives <= 0) {
+                    gameOver();
+                } else {
+                    // Kugel entfernen
+                    scene.remove(targetData.mesh);
+                    targets = targets.filter(t => t !== targetData);
+                }
+            }
+        }
+
+        // --- PARTIKEL SYSTEM ---
+        function createExplosion(position, colorHex) {
+            const particleCount = 20;
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            
+            for (let i = 0; i < particleCount; i++) {
+                positions.push(position.x, position.y, position.z);
+                
+                // Physik für Partikel speichern
+                const velX = (Math.random() - 0.5) * 0.5;
+                const velY = (Math.random() - 0.5) * 0.5;
+                const velZ = (Math.random() - 0.5) * 0.5;
+
+                particles.push({
+                    velocity: new THREE.Vector3(velX, velY, velZ),
+                    life: 1.0, // Lebensdauer
+                    posIndex: i, // ID zum updaten wäre komplexer bei BufferGeometry, wir nutzen Sprites der Einfachheit halber
+                });
+            }
+
+            // Für einfache Explosionen nutzen wir lieber kleine Meshes, das ist einfacher zu handhaben ohne Shader-Code
+            // Reset particles array oben, wir machen es direkter:
+            
+            for(let i=0; i<20; i++) {
+                const pGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+                const pMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true });
+                const pMesh = new THREE.Mesh(pGeo, pMat);
+                pMesh.position.copy(position);
+                
+                // Zufällige Richtung
+                const velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.8,
+                    (Math.random() - 0.5) * 0.8,
+                    (Math.random() - 0.5) * 0.8
+                );
+
+                scene.add(pMesh);
+                particles.push({ mesh: pMesh, velocity: velocity, life: 1.0 });
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.life -= 0.02; // Fade out speed
+                
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    particles.splice(i, 1);
+                } else {
+                    p.mesh.position.add(p.velocity);
+                    p.mesh.rotation.x += 0.1;
+                    p.mesh.material.opacity = p.life;
+                    p.mesh.scale.setScalar(p.life);
+                }
+            }
+        }
+
+        // --- SOUND ---
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'correct') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, now);
+                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.linearRampToValueAtTime(100, now + 0.3);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'levelup') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.setValueAtTime(600, now + 0.1);
+                osc.frequency.setValueAtTime(800, now + 0.2);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.5);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            } else if (type === 'gameover') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.exponentialRampToValueAtTime(50, now + 1);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0, now + 1);
+                osc.start(now);
+                osc.stop(now + 1);
+            }
+        }
+
+        // --- WINDOW HANDLING ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- MAIN LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (gameState.isPlaying) {
+                // Update Kugeln
+                targets.forEach(t => {
+                    t.mesh.rotation.x += t.rotationSpeed.x;
+                    t.mesh.rotation.y += t.rotationSpeed.y;
+                    
+                    t.mesh.position.add(t.velocity);
+
+                    // Bounds checking (Abprallen an unsichtbaren Wänden)
+                    if (t.mesh.position.x > 14 || t.mesh.position.x < -14) t.velocity.x *= -1;
+                    if (t.mesh.position.y > 8 || t.mesh.position.y < -8) t.velocity.y *= -1;
+                });
+            }
+
+            // Sterne bewegen (Flug Effekt)
+            const positions = starField.geometry.attributes.position.array;
+            for(let i = 2; i < positions.length; i += 3) {
+                positions[i] += 0.1; // Z-Achse bewegen
+                if (positions[i] > 20) {
+                    positions[i] = -80; // Reset nach hinten
+                }
+            }
+            starField.geometry.attributes.position.needsUpdate = true;
+
+            // Partikel updaten
+            updateParticles();
+
+            renderer.render(scene, camera);
+        }
+
+        // Init beim Laden
+        init();
+
+    </script>
+</body>
+</html>
